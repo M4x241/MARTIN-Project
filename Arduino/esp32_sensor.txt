@@ -1,0 +1,189 @@
+// =========================
+// Pines L298N
+// =========================
+const int ENA = 4;   
+const int ENB = 19;  
+const int IN1 = 16;  
+const int IN2 = 17;
+const int IN3 = 5;   
+const int IN4 = 18;
+
+// PWM settings
+const int PWM_FREQ = 20000;
+const int PWM_RES = 8;
+
+// =========================
+// Pines Ultrasonicos
+// =========================
+#define TRIG_L 15
+#define ECHO_L 2
+#define TRIG_C 23
+#define ECHO_C 22
+#define TRIG_R 26
+#define ECHO_R 25
+
+// =========================
+// PID variables SUAVES
+// =========================
+float Kp = 1.0;  
+float Ki = 0.0;  
+float Kd = 1.5;  
+
+float error = 0, prev_error = 0;
+float integral = 0;
+float derivative = 0;
+
+// Distancia objetivo a paredes
+const int DIST_OBJETIVO_L = 30; 
+const int DIST_OBJETIVO_R = 30;
+
+int velocidadBase = 200;      // velocidad normal
+int velocidadGiro = 120;      // velocidad suave para giros bruscos
+
+// =========================
+// Motores
+// =========================
+void motorSetup() {
+  pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+
+  ledcAttach(ENA, PWM_FREQ, PWM_RES);
+  ledcAttach(ENB, PWM_FREQ, PWM_RES);
+
+  motorA_stop();
+  motorB_stop();
+}
+
+void motorA_forward(int speed) {
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  ledcWrite(ENA, constrain(speed, 0, 255));
+}
+
+void motorA_backward(int speed) {
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  ledcWrite(ENA, constrain(speed, 0, 255));
+}
+
+void motorA_stop() {
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+  ledcWrite(ENA, 0);
+}
+
+void motorB_forward(int speed) {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  ledcWrite(ENB, constrain(speed, 0, 255));
+}
+
+void motorB_backward(int speed) {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  ledcWrite(ENB, constrain(speed, 0, 255));
+}
+
+void motorB_stop() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  ledcWrite(ENB, 0);
+}
+
+// =========================
+// Ultrasóncios
+// =========================
+long medirDistancia(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(4);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+
+  long duracion = pulseIn(echo, HIGH, 30000);
+  if(duracion == 0) return -1;
+  return duracion / 58;
+}
+
+// =========================
+// PID SUAVE
+// =========================
+float calcularPID(int distIzq, int distDer) {
+  if(distIzq == -1) distIzq = DIST_OBJETIVO_L;
+  if(distDer == -1) distDer = DIST_OBJETIVO_R;
+
+  error = distIzq - distDer;
+  integral += error;
+  derivative = error - prev_error;
+  prev_error = error;
+
+  float salida = Kp * error + Ki * integral + Kd * derivative;
+
+  // LIMITAR FUERZA DE CORRECCIÓN PARA GIROS SUAVES
+  salida = constrain(salida, -80, 80);
+
+  return salida;
+}
+
+// =========================
+// LOOP PRINCIPAL
+// =========================
+void setup() {
+  Serial.begin(115200);
+  motorSetup();
+
+  pinMode(TRIG_L, OUTPUT); pinMode(ECHO_L, INPUT);
+  pinMode(TRIG_C, OUTPUT); pinMode(ECHO_C, INPUT);
+  pinMode(TRIG_R, OUTPUT); pinMode(ECHO_R, INPUT);
+}
+
+void loop() {
+
+  long dL = medirDistancia(TRIG_L, ECHO_L);
+  delay(5);
+  long dC = medirDistancia(TRIG_C, ECHO_C);
+  delay(5);
+  long dR = medirDistancia(TRIG_R, ECHO_R);
+
+  Serial.print("Izq: "); Serial.print(dL);
+  Serial.print(" | Ctr: "); Serial.print(dC);
+  Serial.print(" | Der: "); Serial.println(dR);
+
+  // ======================================================
+  //  GIRO SUAVE POR OBSTÁCULO FRONTAL
+  // ======================================================
+  if(dC > 0 && dC < 15) {
+
+    motorA_forward(velocidadGiro);
+    motorB_backward(velocidadGiro);
+    delay(150);
+
+    if(dL > dR) {
+      motorA_forward(velocidadGiro);
+      motorB_backward(velocidadGiro);
+    } else {
+      motorA_backward(velocidadGiro);
+      motorB_forward(velocidadGiro);
+    }
+
+    delay(450);
+
+    integral = 0;
+    prev_error = 0;
+    return;
+  }
+
+  // ======================================================
+  //  AVANCE CON PID SUAVE
+  // ======================================================
+  float correccion = calcularPID(dL, dR);
+
+  int velA = constrain(velocidadBase - correccion, 0, 255);
+  int velB = constrain(velocidadBase + correccion, 0, 255);
+
+  // Motores invertidos (como dijiste)
+  motorA_forward(velB);  // A = derecha
+  motorB_forward(velA);  // B = izquierda
+
+  delay(50);
+}

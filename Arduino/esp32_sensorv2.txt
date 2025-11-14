@@ -1,0 +1,83 @@
+#include <Arduino.h>
+
+// Pines de los sensores HC-SR04
+#define TRIG_LEFT  12
+#define ECHO_LEFT  14
+
+#define TRIG_CENTER  27
+#define ECHO_CENTER  26
+
+#define TRIG_RIGHT  25
+#define ECHO_RIGHT  33
+
+// Pines de los motores
+#define MOTOR_L_F 5
+#define MOTOR_L_B 18
+#define MOTOR_R_F 19
+#define MOTOR_R_B 21
+
+long readUltrasonic(int trig, int echo) {
+  digitalWrite(trig, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trig, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trig, LOW);
+  long duration = pulseIn(echo, HIGH, 25000);
+  return duration * 0.034 / 2;
+}
+
+// --- Acciones recibidas desde el PC ---
+void mover(String action) {
+  if (action == "forward") {
+    digitalWrite(MOTOR_L_F, HIGH);
+    digitalWrite(MOTOR_R_F, HIGH);
+    digitalWrite(MOTOR_L_B, LOW);
+    digitalWrite(MOTOR_R_B, LOW);
+  } 
+  else if (action == "left") {
+    digitalWrite(MOTOR_L_F, LOW);
+    digitalWrite(MOTOR_R_F, HIGH);
+  }
+  else if (action == "right") {
+    digitalWrite(MOTOR_L_F, HIGH);
+    digitalWrite(MOTOR_R_F, LOW);
+  }
+  else if (action == "stop") {
+    digitalWrite(MOTOR_L_F, LOW);
+    digitalWrite(MOTOR_R_F, LOW);
+    digitalWrite(MOTOR_L_B, LOW);
+    digitalWrite(MOTOR_R_B, LOW);
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+
+  pinMode(TRIG_LEFT, OUTPUT);
+  pinMode(ECHO_LEFT, INPUT);
+  pinMode(TRIG_CENTER, OUTPUT);
+  pinMode(ECHO_CENTER, INPUT);
+  pinMode(TRIG_RIGHT, OUTPUT);
+  pinMode(ECHO_RIGHT, INPUT);
+
+  pinMode(MOTOR_L_F, OUTPUT);
+  pinMode(MOTOR_L_B, OUTPUT);
+  pinMode(MOTOR_R_F, OUTPUT);
+  pinMode(MOTOR_R_B, OUTPUT);
+}
+
+void loop() {
+  long distLeft   = readUltrasonic(TRIG_LEFT, ECHO_LEFT);
+  long distCenter = readUltrasonic(TRIG_CENTER, ECHO_CENTER);
+  long distRight  = readUltrasonic(TRIG_RIGHT, ECHO_RIGHT);
+
+  // --- 1. Enviar sensado al PC ---
+  Serial.printf("{\"L\":%ld,\"C\":%ld,\"R\":%ld}\n", distLeft, distCenter, distRight);
+
+  // --- 2. Esperar acción del PC ---
+  while (!Serial.available());
+  String action = Serial.readStringUntil('\n');
+  mover(action.trim());
+
+  delay(50);
+}
