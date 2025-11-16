@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include "qtable.h"   // <-- Tu tabla Q exportada desde Python
 
 // =========================================
 // PINES
@@ -20,17 +21,14 @@ const int IN4 = 18;
 const int PWM_FREQ = 20000;
 const int PWM_RES = 8;
 
-const int DISTANCIA_OBSTACULO = 20;
+const int DISTANCIA_OBSTACULO = 10;
 int velocidadBase = 200;
 
-// ============================
-// DURACIÓN DEL PASO DISCRETO
-// ============================
-const int STEP_TIME = 200;   // ms → duración del movimiento
-const int SENSOR_INTERVAL = 120; // tiempo entre lecturas
+const int STEP_TIME = 200;
+const int SENSOR_INTERVAL = 120;
 
 // =========================================
-// DISTANCIA
+// FUNCIONES DE DISTANCIA
 // =========================================
 long medirDistancia(int trig, int echo) {
   digitalWrite(trig, LOW);
@@ -44,7 +42,7 @@ long medirDistancia(int trig, int echo) {
 }
 
 // =========================================
-// MOTORES
+// CONTROL DE MOTORES
 // =========================================
 void detenerMotorIzquierdo() {
   digitalWrite(IN1, LOW); digitalWrite(IN2, LOW);
@@ -86,17 +84,11 @@ void detener() {
 }
 
 // =========================================
-// ACCIONES DISCRETAS
+// ACCIONES SEGÚN RL (0,1,2)
 // =========================================
-const float FACTOR_IZQUIERDO = 1.25;
 void accion_avanzar() {
   motor_derecho_adelante(velocidadBase);
   motor_izquierdo_adelante(velocidadBase);
-}
-
-void accion_retroceder() {
-  motor_derecho_atras(velocidadBase);
-  motor_izquierdo_atras(velocidadBase);
 }
 
 void accion_giro_izquierda() {
@@ -109,6 +101,32 @@ void accion_giro_derecha() {
   motor_izquierdo_adelante(velocidadBase);
 }
 
+void ejecutar_accion(int action) {
+  switch(action) {
+    case 0: accion_avanzar(); break;
+    case 1: accion_giro_izquierda(); break;
+    case 2: accion_giro_derecha(); break;
+    default: detener(); break;
+  }
+}
+
+// =========================================
+// MAPEAR ESTADO → ÍNDICE 0..7
+// =========================================
+int state_to_index(int L, int C, int R) {
+  return L*4 + C*2 + R*1;
+}
+
+// =========================================
+// ELEGIR MEJOR ACCIÓN SEGÚN Q-TABLE
+// =========================================
+int seleccionar_accion(int idx) {
+  int best = 0;
+  if (Q[idx][1] > Q[idx][best]) best = 1;
+  if (Q[idx][2] > Q[idx][best]) best = 2;
+  return best;
+}
+
 // =========================================
 // SETUP
 // =========================================
@@ -117,6 +135,7 @@ void setup() {
 
   pinMode(IN1, OUTPUT); pinMode(IN2, OUTPUT);
   pinMode(IN3, OUTPUT); pinMode(IN4, OUTPUT);
+
   ledcAttach(ENA, PWM_FREQ, PWM_RES);
   ledcAttach(ENB, PWM_FREQ, PWM_RES);
 
@@ -125,48 +144,36 @@ void setup() {
   pinMode(TRIG_R, OUTPUT); pinMode(ECHO_R, INPUT);
 
   detener();
-  Serial.println("ROBOT LISTO (acciones discretas)");
+  Serial.println("ROBOT AUTÓNOMO CON Q-TABLE LISTO");
 }
 
 // =========================================
-// LOOP
+// LOOP AUTÓNOMO (SIN ENVÍO SERIAL)
 // =========================================
 void loop() {
 
-  // Esperar acción desde Python
-  if (Serial.available()) {
-    char cmd = Serial.read();
+  long dL = medirDistancia(TRIG_L, ECHO_L);
+  long dC = medirDistancia(TRIG_C, ECHO_C);
+  long dR = medirDistancia(TRIG_R, ECHO_R);
 
-    // ======= ACCIÓN DISCRETA =======
-    switch (cmd) {
-      case '0': accion_avanzar(); break;
-      case '1': accion_giro_izquierda(); break;
-      case '2': accion_giro_derecha(); break;
-      case '3': accion_retroceder(); break;
-      default: detener(); break;
-    }
+  int L = (dL > 0 && dL <= DISTANCIA_OBSTACULO) ? 1 : 0;
+  int C = (dC > 0 && dC <= DISTANCIA_OBSTACULO) ? 1 : 0;
+  int R = (dR > 0 && dR <= DISTANCIA_OBSTACULO) ? 1 : 0;
 
-    // Duración del paso
-    delay(STEP_TIME);
+  int idx = state_to_index(L, C, R);
 
-    // Detener después del movimiento
-    detener();
+  // acción según Q-table
+  int action = seleccionar_accion(idx);
 
-    // Pequeña pausa antes de enviar sensores
-    delay(20);
+  Serial.print("Estado LCR: ");
+  Serial.print(L); Serial.print(C); Serial.print(R);
+  Serial.print(" -> Acción: ");
+  Serial.println(action);
 
-    // ======= ENVIAR SENSORES =======
-    long dL = medirDistancia(TRIG_L, ECHO_L);
-    long dC = medirDistancia(TRIG_C, ECHO_C);
-    long dR = medirDistancia(TRIG_R, ECHO_R);
+  ejecutar_accion(action);
 
-    int L = (dL > 0 && dL <= DISTANCIA_OBSTACULO) ? 1 : 0;
-    int C = (dC > 0 && dC <= DISTANCIA_OBSTACULO) ? 1 : 0;
-    int R = (dR > 0 && dR <= DISTANCIA_OBSTACULO) ? 1 : 0;
+  delay(STEP_TIME);
+  detener();
 
-    Serial.print("{\"L\":"); Serial.print(L);
-    Serial.print(",\"C\":"); Serial.print(C);
-    Serial.print(",\"R\":"); Serial.print(R);
-    Serial.println("}");
-  }
+  delay(50);
 }
